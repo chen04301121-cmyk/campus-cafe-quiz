@@ -50,6 +50,94 @@ The reference SQL is one possible solution. Students should compare
 result sets rather than reproduce the reference SQL character for
 character. The application does not automatically assign grades.
 
+## AI SQL Assistant (RAG Text-to-SQL)
+
+The app has a second, public page that turns a plain-English question into a
+SQL query using Retrieval-Augmented Generation (RAG). No sign-in is required.
+
+- AI SQL Assistant page: https://campus-cafe-quiz-b2ifkmvrgsbw4azmh6h22x.streamlit.app/AI_SQL_Assistant
+- Quiz page (requires sign-in): https://campus-cafe-quiz-b2ifkmvrgsbw4azmh6h22x.streamlit.app/
+
+If the app is asleep, click "Yes, get this app back up!" and wait about a minute. The first question is slower because the vector database is built on first use.
+
+### RAG architecture
+
+```
+User question
+   -> ChromaDB vector search (top 4 most similar knowledge documents)
+   -> OpenAI model (question + retrieved documents in one prompt)
+   -> Generated SQL
+   -> Extra credit: run with the read-only database role, show the table,
+      compare with the quiz's expected answer
+```
+
+**Vector database (ChromaDB).** 14 short documents are embedded with
+ChromaDB's default embedding model and stored in a local collection:
+
+- 3 database schema documents (tables, columns, the foreign key)
+- 5 business semantics documents (what "units sold", "revenue" or "never
+  ordered" mean in SQL, allowed category values, PostgreSQL rules)
+- 6 few-shot examples (a question with its SQL; they are different from the
+  quiz questions so the quiz answers are not leaked)
+
+For every question the app retrieves the 4 most similar documents. The page
+shows them in the "Retrieved context" section, so the retrieval is visible.
+
+**AI API.** OpenAI Chat Completions API. The model name is read from the
+`OPENAI_MODEL` environment variable. The prompt contains only the retrieved
+documents and the question, and the model is told to return one SELECT query.
+The answer is checked to start with `SELECT` or `WITH` before it is used.
+
+**Safety.**
+
+- Generated SQL runs only with the existing `quiz_reader` role (SELECT on
+  `products` and `orders`), in a read-only transaction, with a 5 second
+  timeout, and multiple statements are rejected.
+- Because the page is public, the AI can be called at most 10 times per
+  visitor session and 100 times per day for the whole site.
+- The API key is stored only in `.env` (local) or Streamlit Secrets
+  (deployed). It is never committed.
+
+### New files
+
+| File | Purpose |
+|---|---|
+| `rag_knowledge.py` | The 14 knowledge documents (schema, semantics, examples) |
+| `rag_store.py` | Builds the ChromaDB collection and retrieves similar documents |
+| `rag_sql.py` | Builds the prompt, calls OpenAI, cleans and checks the SQL |
+| `sql_runner.py` | Read-only execution without sign-in and result comparison |
+| `pages/1_AI_SQL_Assistant.py` | The public Streamlit page |
+
+### Run locally
+
+1. Install the dependencies: `python -m pip install -r requirements.txt`
+2. Add these lines to the local `.env` file (do not commit it):
+
+```
+OPENAI_API_KEY="YOUR_OPENAI_API_KEY"
+OPENAI_MODEL="YOUR_MODEL_NAME"
+```
+
+3. Start the app: `python -m streamlit run app.py`
+4. Open **AI SQL Assistant** in the left sidebar.
+
+The `chroma_db/` folder is created automatically on the first question and is
+ignored by Git. The first question is slower because ChromaDB downloads its
+default embedding model once.
+
+When deploying to Streamlit Community Cloud, add `OPENAI_API_KEY` and
+`OPENAI_MODEL` to the app's Secrets next to the existing database secrets.
+
+### Screenshots
+
+Basic: a question and its generated SQL.
+
+![Question and generated SQL](docs/rag-basic.png)
+
+Extra credit: executed SQL, result table, and validation outcome.
+
+![Executed SQL, result table and validation](docs/rag-extra-credit.png)
+
 ## Architecture
 
 - **Streamlit Community Cloud** hosts the Python web application.
